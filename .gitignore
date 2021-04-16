@@ -1,0 +1,6 @@
+*.o
+*.bin
+*.bba
+*.elf
+__pycache__
+bba_exec_test
