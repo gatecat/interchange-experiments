@@ -121,9 +121,9 @@ def discover_contented_pins(device, site, site_type):
         if wire not in wire2cone:
             continue
         icones, ocones = wire2cone[wire]
-        if len(icones) == 1 and len(ocones) == 0:
+        if len(icones) == 1 and site_pin.direction == Direction.Input:
             uncontented_belpins.add(icones[0])
-        elif len(icones) == 0 and len(ocones) == 1:
+        elif len(ocones) == 1 and site_pin.direction == Direction.Output:
             uncontented_belpins.add(ocones[0])
     for pin_name in sorted(site_type.site_pins.keys()):
         site_pin = site_type.site_pin(site, device, pin_name)
@@ -133,11 +133,11 @@ def discover_contented_pins(device, site, site_type):
         icones, ocones = wire2cone[wire]
         icones = filter_cone(icones)
         ocones = filter_cone(ocones)
-        if len(icones) > 1:
+        if len(icones) > 1 and site_pin.direction == Direction.Input:
             print("Contented input {}:".format(pin_name))
             for (bel, pin) in icones:
                 print("    {}.{}".format(bel, pin))
-        if len(ocones) > 1:
+        if len(ocones) > 1 and site_pin.direction == Direction.Output:
             print("Contented output {}:".format(pin_name))
             for (bel, pin) in ocones:
                 print("    {}.{}".format(bel, pin))
