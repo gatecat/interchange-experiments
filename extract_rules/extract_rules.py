@@ -60,6 +60,15 @@ def build_cone_map(site, site_type):
         wire2cone[wire][1].append(cone)
         for downhill in wire2downhill.get(wire, []):
             visit_fwd(downhill, cone, visited)
+    def visit_bwd(wire, cone, visited):
+        if wire in visited:
+            return
+        visited.add(wire)
+        if wire not in wire2cone:
+            wire2cone[wire] = ([], [])
+        wire2cone[wire][0].append(cone)
+        for uphill in wire2uphill.get(wire, []):
+            visit_bwd(uphill, cone, visited)
     for bel in site_type.bels:
         if bel.category != 'logic':
             continue
@@ -71,9 +80,65 @@ def build_cone_map(site, site_type):
             if pin.direction == Direction.Output:
                 # track output cone
                 visit_fwd(wires[0], (bel.name, pin.name), set())
+            elif pin.direction == Direction.Input:
+                # track input cone
+                visit_bwd(wires[0], (bel.name, pin.name), set())
     for (wire, (icones, ocones)) in sorted(wire2cone.items(), key = lambda x: x[0]):
         if len(ocones) > 1:
             print("Wire {} in output cones:".format(wire.name(site_type)))
+            for (bel, pin) in ocones:
+                print("    {}.{}".format(bel, pin))
+        if len(icones) > 1:
+            print("Wire {} in input cones:".format(wire.name(site_type)))
+            for (bel, pin) in icones:
+                print("    {}.{}".format(bel, pin))
+
+def discover_dedicated_paths(site, site_type):
+    print("Dedicated paths:")
+    for bel in site_type.bels:
+        if bel.category != 'logic':
+            continue
+        for pin in bel.get_pins(site):
+            wires = pin.site_wires()
+            if len(wires) == 0:
+                continue
+            assert len(wires) == 1
+            if pin.direction == Direction.Input:
+                ocone = wire2cone.get(wires[0], ([], []))[1]
+                for (out_bel, out_pin) in ocone:
+                    print("    {}.{} --> {}.{}".format(out_bel, out_pin, bel.name, pin.name))
+
+def discover_contented_pins(device, site, site_type):
+    # First discover which bel pins have an uncontented route to an input/output
+    uncontented_belpins = set()
+    # Remove pins with dedicated access to a top level pin, as they don't count towards contention
+    # - we can always use an uncontented path for these
+    def filter_cone(cone):
+        return [p for p in cone if p not in uncontented_belpins]
+    for pin_name in site_type.site_pins.keys():
+        site_pin = site_type.site_pin(site, device, pin_name)
+        wire = site_pin.site_wires()[0]
+        if wire not in wire2cone:
+            continue
+        icones, ocones = wire2cone[wire]
+        if len(icones) == 1 and len(ocones) == 0:
+            uncontented_belpins.add(icones[0])
+        elif len(icones) == 0 and len(ocones) == 1:
+            uncontented_belpins.add(ocones[0])
+    for pin_name in sorted(site_type.site_pins.keys()):
+        site_pin = site_type.site_pin(site, device, pin_name)
+        wire = site_pin.site_wires()[0]
+        if wire not in wire2cone:
+            continue
+        icones, ocones = wire2cone[wire]
+        icones = filter_cone(icones)
+        ocones = filter_cone(ocones)
+        if len(icones) > 1:
+            print("Contented input {}:".format(pin_name))
+            for (bel, pin) in icones:
+                print("    {}.{}".format(bel, pin))
+        if len(ocones) > 1:
+            print("Contented output {}:".format(pin_name))
             for (bel, pin) in ocones:
                 print("    {}.{}".format(bel, pin))
 
@@ -100,6 +165,8 @@ def main():
     build_pip_map(site, site_type)
     find_shared_signals(site, site_type)
     build_cone_map(site, site_type)
+    discover_dedicated_paths(site, site_type)
+    discover_contented_pins(device, site, site_type)
 
 if __name__ == '__main__':
     main()
