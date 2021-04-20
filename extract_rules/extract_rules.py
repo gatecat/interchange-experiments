@@ -83,15 +83,15 @@ def build_cone_map(site, site_type):
             elif pin.direction == Direction.Input:
                 # track input cone
                 visit_bwd(wires[0], (bel.name, pin.name), set())
-    for (wire, (icones, ocones)) in sorted(wire2cone.items(), key = lambda x: x[0]):
-        if len(ocones) > 1:
-            print("Wire {} in output cones:".format(wire.name(site_type)))
-            for (bel, pin) in ocones:
-                print("    {}.{}".format(bel, pin))
-        if len(icones) > 1:
-            print("Wire {} in input cones:".format(wire.name(site_type)))
-            for (bel, pin) in icones:
-                print("    {}.{}".format(bel, pin))
+    # for (wire, (icones, ocones)) in sorted(wire2cone.items(), key = lambda x: x[0]):
+    #     if len(ocones) > 1:
+    #         print("Wire {} in output cones:".format(wire.name(site_type)))
+    #         for (bel, pin) in ocones:
+    #             print("    {}.{}".format(bel, pin))
+    #     if len(icones) > 1:
+    #         print("Wire {} in input cones:".format(wire.name(site_type)))
+    #         for (bel, pin) in icones:
+    #             print("    {}.{}".format(bel, pin))
 
 def discover_dedicated_paths(site, site_type):
     print("Dedicated paths:")
@@ -107,6 +107,13 @@ def discover_dedicated_paths(site, site_type):
                 ocone = wire2cone.get(wires[0], ([], []))[1]
                 for (out_bel, out_pin) in ocone:
                     print("    {}.{} --> {}.{}".format(out_bel, out_pin, bel.name, pin.name))
+
+def discover_uncontented_wires(site, site_type):
+    # Wires only in amo input/output cone are much simpler to deal with
+    print("Uncontented wires:")
+    for (wire, (icones, ocones)) in sorted(wire2cone.items(), key = lambda x: x[0]):
+        if len(ocones) <= 1 and len(icones) <= 1:
+            print("    {}".format(wire.name(site_type)))
 
 def discover_contented_pins(device, site, site_type):
     # First discover which bel pins have an uncontented route to an input/output
@@ -165,6 +172,7 @@ def main():
     build_pip_map(site, site_type)
     find_shared_signals(site, site_type)
     build_cone_map(site, site_type)
+    discover_uncontented_wires(site, site_type)
     discover_dedicated_paths(site, site_type)
     discover_contented_pins(device, site, site_type)
 
