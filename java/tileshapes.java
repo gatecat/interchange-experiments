@@ -172,6 +172,15 @@ public class tileshapes {
 
         System.out.printf("%d/%d tile-type-wires are useful.\n", useful_tt_wires, total_tt_wires);
 
+        int total_dev_wires = 0;
+        for (Tile t : tiles) {
+            total_dev_wires += flat_tiles.get(t.getTileTypeEnum()).size();
+            for (Site s : t.getSites())
+                total_dev_wires += s.getSiteWireCount();
+        }
+
+        System.out.printf("%d total database wires\n", total_dev_wires);
+
         HashSet<String> seen_tile_shapes = new HashSet<>();
         HashSet<String> seen_node_shapes = new HashSet<>();
         int ti = 0;
