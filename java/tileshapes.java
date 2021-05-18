@@ -17,18 +17,51 @@ import java.util.Base64;
 
 public class tileshapes {
     static long database_size = 0;
+
+    public static class TileFlatWires {
+        // This squishes out wires with no associated pips or site pins from a tile
+        public int [] wire_to_flat;
+        public int active_count;
+        public TileFlatWires(Tile t) {
+            int flat_idx = 0;
+            wire_to_flat = new int[t.getWireCount()];
+            for (int i = 0; i < t.getWireCount(); i++) {
+                Wire w = new Wire(t, i);
+                if (w.getBackwardPIPs().size() == 0 && w.getForwardPIPs().size() == 0 && w.getSitePin() == null) {
+                    wire_to_flat[i] = -1;
+                } else {
+                    wire_to_flat[i] = flat_idx;
+                    ++flat_idx;
+                }
+            }
+            active_count = flat_idx;
+        }
+        int get(int w) {
+            return wire_to_flat[w];
+        }
+        int size() {
+            return active_count;
+        }
+    }
+
+    public static HashMap<TileTypeEnum, TileFlatWires> flat_tiles = new HashMap();
+
     public static class TileInst {
         public int [][] wire_to_node;
         public int [][][] node_wires;
 
         public TileInst(Tile t) {
-            wire_to_node = new int[t.getWireCount()][3];
-            node_wires = new int[t.getWireCount()][][];
-            for (int i = 0; i < t.getWireCount(); i++) {
-                Wire w = new Wire(t, i);
+            TileFlatWires fw = flat_tiles.get(t.getTileTypeEnum());
+            wire_to_node = new int[fw.size()][3];
+            node_wires = new int[fw.size()][][];
+            for (int wi = 0; wi < t.getWireCount(); wi++) {
+                int i = fw.get(wi);
+                if (i == -1)
+                    continue;
+                Wire w = new Wire(t, wi);
                 Node n = w.getNode();
 
-                if (n == null || (w.getBackwardPIPs().size() == 0 && w.getForwardPIPs().size() == 0 && w.getSitePin() == null)) {
+                if (n == null) {
                     wire_to_node[i][0] = 0;
                     wire_to_node[i][1] = 0;
                     wire_to_node[i][2] = i;
@@ -49,7 +82,7 @@ public class tileshapes {
                                 continue;
                             node_wires[i][j][0] = tw.getColumn() - t.getColumn();
                             node_wires[i][j][1] = tw.getRow() - t.getRow();
-                            node_wires[i][j][2] = nw[j].getWireIndex();
+                            node_wires[i][j][2] = flat_tiles.get(tw.getTileTypeEnum()).get(nw[j].getWireIndex());
                         }
                     }
                 }
@@ -122,12 +155,28 @@ public class tileshapes {
         Device d = Device.getDevice(args[0]);
         long node_count = 0L;
 
+        Collection<Tile> tiles = d.getAllTiles();
+
+        int total_tt_wires = 0;
+        int useful_tt_wires = 0;
+
+        for (Tile t : tiles) {
+            TileTypeEnum tte = t.getTileTypeEnum();
+            if (flat_tiles.containsKey(tte))
+                continue;
+            TileFlatWires fw = new TileFlatWires(t);
+            total_tt_wires += t.getWireCount();
+            useful_tt_wires += fw.size();
+            flat_tiles.put(tte, fw);
+        }
+
+        System.out.printf("%d/%d tile-type-wires are useful.\n", useful_tt_wires, total_tt_wires);
+
         HashSet<String> seen_tile_shapes = new HashSet<>();
         HashSet<String> seen_node_shapes = new HashSet<>();
-        Collection<Tile> tiles = d.getAllTiles();
         int ti = 0;
         for (Tile t : tiles) {
-            if ((ti % 100) == 0)
+            if ((ti % 100000) == 0)
                 System.out.printf("%d/%d\n", (ti+1), tiles.size());
             ++ti;
            TileInst inst = new TileInst(t);
@@ -141,32 +190,6 @@ public class tileshapes {
         System.out.printf("%d tiles, %d tile shapes\n", tiles.size(), seen_tile_shapes.size());
         System.out.printf("%d nontrivial nodes, %d node shapes\n", node_count, seen_node_shapes.size());
         System.out.printf("dedup db size: %dMiB\n", database_size / (1024*1024));
-        /*
-        FileWriter vf = new FileWriter("/home/david/rapidwright_test/nodes_vu9.txt", false);
-        PrintWriter v = new PrintWriter(vf);
-        HashSet<Node> seen_nodes = new HashSet<>();
-        for (Tile t : d.getAllTiles()) {
-            System.out.println(t.getName());
-            for (PIP p : t.getPIPs()) {
-                Node[] nodes = {p.getStartNode(), p.getEndNode()};
-                for (Node n : nodes) {
-                    if (seen_nodes.contains(n))
-                        continue;
-                    var wires = n.getAllWiresInNode();
-                    if (wires.length == 0)
-                        continue;
-                    seen_nodes.add(n);
-                    for (Wire w : wires) {
-                        v.printf("%d %d %d ", w.getTile().getColumn(), w.getTile().getColumn(), w.getWireIndex());
-                    }
-                    v.println();
-
-                }
-            }
-        }
-        v.close();
-        vf.close();
-         */
     }
 
 }
