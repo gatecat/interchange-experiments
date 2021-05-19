@@ -26,7 +26,7 @@ def find_shared_signals(site, site_type):
         print("Wire {}:".format(wire.name(site_type)))
         for (bel, pin) in pins:
             print("    {}.{}".format(bel, pin))
-
+    return wire2pins
 # Site wire pip map
 wire2downhill = {}
 wire2uphill = {}
@@ -149,11 +149,62 @@ def discover_contented_pins(device, site, site_type):
             for (bel, pin) in ocones:
                 print("    {}.{}".format(bel, pin))
 
+# Currently we are generating pseudocode, to experiment without a proper codegen yet
+def codegen_var(name):
+    return name
+def codegen_get_pin(bel, pin):
+    return ("get_pin(BEL_{}, PORT_{})".format(bel, pin))
+def codegen_null():
+    return "null"
+def codegen_if(cond, t, f=[]):
+    return ["if {} then".format(cond)] + \
+        ["    {}".format(x) for x in t] + \
+        ((["else"] + ["   {}".format(x) for x in f]) if len(f) > 0 else []) + \
+        ["endif"]
+def codegen_assign(var, val):
+    return ["{} ← {}".format(var, val)]
+def codegen_eq(x, y):
+    return "{} = {}".format(x, y)
+def codegen_neq(x, y):
+    return "{} ≠ {}".format(x, y)
+def codegen_reject():
+    return ["reject"]
+def codegen_blank():
+    return [""]
+
+def codegen_write(out, x):
+    for l in x:
+        print(l, file=out)
+
+def codegen_shared(out, wire2pins, site_type):
+    code = []
+    for wire, pins in sorted(wire2pins.items(), key = lambda x: x[0]):
+        if len(pins) <= 1:
+            continue
+        wire_var = codegen_var("wire_{}".format(wire.name(site_type)))
+        code += codegen_assign(wire_var, codegen_null())
+        for bel, pin in pins:
+            pin_var = codegen_var("pin_{}_{}".format(bel, pin))
+            code += codegen_assign(pin_var, codegen_get_pin(bel, pin))
+            code += codegen_if(
+                codegen_neq(pin_var, codegen_null()),
+                codegen_if(codegen_eq(wire_var, codegen_null()),
+                    codegen_assign(wire_var, pin_var),
+                    codegen_if(codegen_neq(wire_var, pin_var),
+                        codegen_reject()
+                    )
+                )
+            )
+        code += codegen_blank()
+    codegen_write(out, code)
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--schema_dir', required=True)
     parser.add_argument('--device', required=True)
     parser.add_argument('--site_type', required=True)
+    parser.add_argument('--codegen')
+
     args = parser.parse_args()
     interchange = Interchange(args.schema_dir)
 
@@ -170,11 +221,15 @@ def main():
                 site = site_value
                 break
     build_pip_map(site, site_type)
-    find_shared_signals(site, site_type)
+    wire2pins = find_shared_signals(site, site_type)
     build_cone_map(site, site_type)
     discover_uncontented_wires(site, site_type)
     discover_dedicated_paths(site, site_type)
-    discover_contented_pins(device, site, site_type)
+    # discover_contented_pins(device, site, site_type)
 
+    if "codegen" in args:
+        with open(args.codegen, "w") as pseudocode:
+            print("# Shared wires", file=pseudocode)
+            codegen_shared(pseudocode, wire2pins, site_type)
 if __name__ == '__main__':
     main()
