@@ -172,9 +172,28 @@ def codegen_reject():
 def codegen_blank():
     return [""]
 
+def label(section):
+    return ["{}:".format(section)]
+
+def codegen_accept(section):
+    return ["goto {}".format(section)]
+
 def codegen_write(out, x):
     for l in x:
         print(l, file=out)
+
+# The common check-assign pattern in validity checks
+def check_assign(wire, value, accept=[]):
+    return codegen_if(
+        codegen_neq(value, codegen_null()),
+        codegen_if(codegen_eq(value, codegen_null()),
+            codegen_assign(wire, value) + accept,
+            codegen_if(codegen_neq(wire, value),
+                codegen_reject(),
+                accept,
+            )
+        )
+    )
 
 def codegen_shared(out, wire2pins, site_type):
     code = []
@@ -186,15 +205,8 @@ def codegen_shared(out, wire2pins, site_type):
         for bel, pin in pins:
             pin_var = codegen_var("pin_{}_{}".format(bel, pin))
             code += codegen_assign(pin_var, codegen_get_pin(bel, pin))
-            code += codegen_if(
-                codegen_neq(pin_var, codegen_null()),
-                codegen_if(codegen_eq(wire_var, codegen_null()),
-                    codegen_assign(wire_var, pin_var),
-                    codegen_if(codegen_neq(wire_var, pin_var),
-                        codegen_reject()
-                    )
-                )
-            )
+            code += check_assign(wire_var, pin_var)
+
         code += codegen_blank()
     codegen_write(out, code)
 
