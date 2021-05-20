@@ -234,7 +234,7 @@ def codegen_ipins(out, uncontented_belpins, wire2cone, belpin_to_sitepin, site, 
             continue
         sp_var = codegen_var("sitepin_{}".format(sp))
         code += codegen_assign(sp_var, codegen_null())
-        sitepin_to_var[sp] = sp_var
+        sitepin_to_var[sp] = str(sp_var)
 
     for bel in site_type.bels:
         if bel.category != 'logic':
@@ -260,7 +260,7 @@ def codegen_ipins(out, uncontented_belpins, wire2cone, belpin_to_sitepin, site, 
                 code += codegen_if(codegen_eq(pin_var, codegen_get_pin(out_bel, out_pin)), codegen_accept(end_lbl))
             # Use a site pin
             # TODO: check conflicts en route and possibly backtrack needed too...
-            for site_pins in belpin_to_sitepin.get((bel.name, pin.name), []):
+            for sp in belpin_to_sitepin.get((bel.name, pin.name), []):
                 sp_var = sitepin_to_var[sp]
                 code += codegen_if(codegen_eq(sp_var, codegen_null()),
                            codegen_assign(sp_var, pin_var) + codegen_accept(end_lbl),
