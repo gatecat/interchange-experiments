@@ -118,6 +118,7 @@ def discover_uncontented_wires(site, site_type):
 def discover_contented_pins(device, site, site_type):
     # First discover which bel pins have an uncontented route to an input/output
     uncontented_belpins = set()
+    belpin_to_sitepin = {}
     # Remove pins with dedicated access to a top level pin, as they don't count towards contention
     # - we can always use an uncontented path for these
     def filter_cone(cone):
@@ -144,10 +145,17 @@ def discover_contented_pins(device, site, site_type):
             print("Contented input {}:".format(pin_name))
             for (bel, pin) in icones:
                 print("    {}.{}".format(bel, pin))
+                if (bel, pin) not in belpin_to_sitepin:
+                    belpin_to_sitepin[(bel, pin)] = []
+                belpin_to_sitepin[(bel, pin)].append(pin_name)
         if len(ocones) > 1 and site_pin.direction == Direction.Output:
             print("Contented output {}:".format(pin_name))
             for (bel, pin) in ocones:
                 print("    {}.{}".format(bel, pin))
+                if (bel, pin) not in belpin_to_sitepin:
+                    belpin_to_sitepin[(bel, pin)] = []
+                belpin_to_sitepin[(bel, pin)].append(pin_name)
+    return (uncontented_belpins, belpin_to_sitepin)
 
 # Currently we are generating pseudocode, to experiment without a proper codegen yet
 def codegen_var(name):
@@ -237,7 +245,7 @@ def main():
     build_cone_map(site, site_type)
     discover_uncontented_wires(site, site_type)
     discover_dedicated_paths(site, site_type)
-    # discover_contented_pins(device, site, site_type)
+    (uncontented_belpins, belpin_to_sitepin) = discover_contented_pins(device, site, site_type)
 
     if "codegen" in args:
         with open(args.codegen, "w") as pseudocode:
