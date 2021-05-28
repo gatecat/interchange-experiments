@@ -26,7 +26,7 @@ def find_shared_signals(site, site_type):
         print("Wire {}:".format(wire.name(site_type)))
         for (bel, pin) in pins:
             print("    {}.{}".format(bel, pin))
-
+    return wire2pins
 # Site wire pip map
 wire2downhill = {}
 wire2uphill = {}
@@ -118,6 +118,7 @@ def discover_uncontented_wires(site, site_type):
 def discover_contented_pins(device, site, site_type):
     # First discover which bel pins have an uncontented route to an input/output
     uncontented_belpins = set()
+    belpin_to_sitepin = {}
     # Remove pins with dedicated access to a top level pin, as they don't count towards contention
     # - we can always use an uncontented path for these
     def filter_cone(cone):
@@ -140,6 +141,16 @@ def discover_contented_pins(device, site, site_type):
         icones, ocones = wire2cone[wire]
         icones = filter_cone(icones)
         ocones = filter_cone(ocones)
+
+        for (bel, pin) in icones:
+            if (bel, pin) not in belpin_to_sitepin:
+                belpin_to_sitepin[(bel, pin)] = []
+            belpin_to_sitepin[(bel, pin)].append(pin_name)
+        for (bel, pin) in ocones:
+            if (bel, pin) not in belpin_to_sitepin:
+                belpin_to_sitepin[(bel, pin)] = []
+            belpin_to_sitepin[(bel, pin)].append(pin_name)
+
         if len(icones) > 1 and site_pin.direction == Direction.Input:
             print("Contented input {}:".format(pin_name))
             for (bel, pin) in icones:
@@ -148,12 +159,185 @@ def discover_contented_pins(device, site, site_type):
             print("Contented output {}:".format(pin_name))
             for (bel, pin) in ocones:
                 print("    {}.{}".format(bel, pin))
+    return (uncontented_belpins, belpin_to_sitepin)
+
+# Currently we are generating pseudocode, to experiment without a proper codegen yet
+def codegen_var(name):
+    return name
+def codegen_get_pin(bel, pin):
+    return ("get_pin(BEL_{}, PORT_{})".format(bel, pin))
+def codegen_count_sinks(net):
+    return ("count_sinks({})".format(net))
+def codegen_sub(x, y):
+    return "{} - {}".format(x, y)
+def codegen_null():
+    return "null"
+def codegen_if(cond, t, f=[]):
+    return ["if {} then".format(cond)] + \
+        ["    {}".format(x) for x in t] + \
+        ((["else"] + ["   {}".format(x) for x in f]) if len(f) > 0 else []) + \
+        ["endif"]
+def codegen_assign(var, val):
+    return ["{} ← {}".format(var, val)]
+def codegen_eq(x, y):
+    return "{} = {}".format(x, y)
+def codegen_neq(x, y):
+    return "{} ≠ {}".format(x, y)
+def codegen_sub(x, y):
+    return "{} - {}".format(x, y)
+def codegen_reject():
+    return ["reject"]
+def codegen_blank():
+    return [""]
+
+def label(section):
+    return ["{}:".format(section)]
+
+def codegen_accept(section):
+    return ["goto {}".format(section)]
+
+def codegen_write(out, x):
+    for l in x:
+        print(l, file=out)
+
+# The common check-assign pattern in validity checks
+def check_assign(wire, value, accept=[]):
+    return codegen_if(
+        codegen_neq(value, codegen_null()),
+        codegen_if(codegen_eq(value, codegen_null()),
+            codegen_assign(wire, value) + accept,
+            codegen_if(codegen_neq(wire, value),
+                codegen_reject(),
+                accept,
+            )
+        )
+    )
+
+def codegen_shared(out, wire2pins, site_type):
+    code = []
+    for wire, pins in sorted(wire2pins.items(), key = lambda x: x[0]):
+        if len(pins) <= 1:
+            continue
+        wire_var = codegen_var("wire_{}".format(wire.name(site_type)))
+        code += codegen_assign(wire_var, codegen_null())
+        for bel, pin in pins:
+            pin_var = codegen_var("pin_{}_{}".format(bel, pin))
+            code += codegen_assign(pin_var, codegen_get_pin(bel, pin))
+            code += check_assign(wire_var, pin_var)
+
+        code += codegen_blank()
+    codegen_write(out, code)
+
+
+def codegen_ipins(out, uncontented_belpins, wire2cone, belpin_to_sitepin, site, site_type):
+    code = []
+    sitepin_count = {}
+    for site_pins in belpin_to_sitepin.values():
+        for sp in site_pins:
+            sitepin_count[sp] = sitepin_count.get(sp, 0) + 1
+    sitepin_to_var = {}
+    for sp, count in sorted(sitepin_count.items(), key=lambda x: x[0]):
+        if count < 2:
+            continue
+        sp_var = codegen_var("sitepin_{}".format(sp))
+        code += codegen_assign(sp_var, codegen_null())
+        sitepin_to_var[sp] = str(sp_var)
+
+    for bel in site_type.bels:
+        if bel.category != 'logic':
+            continue
+        for pin in bel.get_pins(site):
+            wires = pin.site_wires()
+            if len(wires) == 0:
+                continue
+            assert len(wires) == 1
+            if pin.direction != Direction.Input:
+                continue
+            if (bel.name, pin.name) in uncontented_belpins:
+                continue
+            # Get signal
+            pin_var = codegen_var("ipin_{}_{}".format(bel.name, pin.name))
+            end_lbl = "{}_{}_done".format(bel.name, pin.name)
+            code += codegen_assign(pin_var, codegen_get_pin(bel.name, pin.name))
+            # Not connected
+            code += codegen_if(codegen_eq(pin_var, codegen_null()), codegen_accept(end_lbl))
+            # Dedicated path
+            ocone = wire2cone.get(wires[0], ([], []))[1]
+            for (out_bel, out_pin) in ocone:
+                code += codegen_if(codegen_eq(pin_var, codegen_get_pin(out_bel, out_pin)), codegen_accept(end_lbl))
+            # Use a site pin
+            # TODO: check conflicts en route and possibly backtrack needed too...
+            for sp in belpin_to_sitepin.get((bel.name, pin.name), []):
+                sp_var = sitepin_to_var[sp]
+                code += codegen_if(codegen_eq(sp_var, codegen_null()),
+                           codegen_assign(sp_var, pin_var) + codegen_accept(end_lbl),
+                           codegen_if(codegen_eq(sp_var, pin_var),
+                               codegen_accept(end_lbl),
+                           )
+                       )
+            code += codegen_reject()
+            code += label(end_lbl)
+            code += codegen_blank()
+    codegen_write(out, code)
+
+def codegen_opins(out, uncontented_belpins, wire2cone, belpin_to_sitepin, site, site_type):
+    code = []
+    sitepin_count = {}
+    for site_pins in belpin_to_sitepin.values():
+        for sp in site_pins:
+            sitepin_count[sp] = sitepin_count.get(sp, 0) + 1
+    sitepin_to_var = {}
+    for sp, count in sorted(sitepin_count.items(), key=lambda x: x[0]):
+        if count < 2:
+            continue
+        sp_var = codegen_var("sitepin_{}".format(sp))
+        code += codegen_assign(sp_var, codegen_null())
+        sitepin_to_var[sp] = str(sp_var)
+
+    for bel in site_type.bels:
+        if bel.category != 'logic':
+            continue
+        for pin in bel.get_pins(site):
+            wires = pin.site_wires()
+            if len(wires) == 0:
+                continue
+            assert len(wires) == 1
+            if pin.direction != Direction.Output:
+                continue
+            if (bel.name, pin.name) in uncontented_belpins:
+                continue
+            # Get signal
+            pin_var = codegen_var("opin_{}_{}".format(bel.name, pin.name))
+            end_lbl = "{}_{}_done".format(bel.name, pin.name)
+            code += codegen_assign(pin_var, codegen_get_pin(bel.name, pin.name))
+            # Not connected
+            code += codegen_if(codegen_eq(pin_var, codegen_null()), codegen_accept(end_lbl))
+            # All dedicated paths
+            count_var = codegen_var("opin_{}_{}_sinks".format(bel.name, pin.name))
+            code += codegen_assign(count_var, codegen_count_sinks(pin_var))
+            ocone = wire2cone.get(wires[0], ([], []))[0]
+            for (out_bel, out_pin) in ocone:
+                code += codegen_if(codegen_eq(pin_var, codegen_get_pin(out_bel, out_pin)),
+                    codegen_assign(count_var, codegen_sub(count_var, 1)))
+            code += codegen_if(codegen_eq(count_var, "0"), codegen_accept(end_lbl))
+            # Use a site pin
+            # TODO: check conflicts en route and possibly backtrack needed too...
+            for sp in belpin_to_sitepin.get((bel.name, pin.name), []):
+                sp_var = sitepin_to_var[sp]
+                code += codegen_if(codegen_eq(sp_var, codegen_null()),
+                           codegen_assign(sp_var, pin_var) + codegen_accept(end_lbl))
+            code += codegen_reject()
+            code += label(end_lbl)
+            code += codegen_blank()
+    codegen_write(out, code)
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--schema_dir', required=True)
     parser.add_argument('--device', required=True)
     parser.add_argument('--site_type', required=True)
+    parser.add_argument('--codegen')
+
     args = parser.parse_args()
     interchange = Interchange(args.schema_dir)
 
@@ -170,11 +354,20 @@ def main():
                 site = site_value
                 break
     build_pip_map(site, site_type)
-    find_shared_signals(site, site_type)
+    wire2pins = find_shared_signals(site, site_type)
     build_cone_map(site, site_type)
     discover_uncontented_wires(site, site_type)
     discover_dedicated_paths(site, site_type)
-    discover_contented_pins(device, site, site_type)
+    (uncontented_belpins, belpin_to_sitepin) = discover_contented_pins(device, site, site_type)
 
+
+    if "codegen" in args:
+        with open(args.codegen, "w") as pseudocode:
+            print("# Shared wires", file=pseudocode)
+            codegen_shared(pseudocode, wire2pins, site_type)
+            print("# Input pins", file=pseudocode)
+            codegen_ipins(pseudocode, uncontented_belpins, wire2cone, belpin_to_sitepin, site, site_type)
+            print("# Output pins", file=pseudocode)
+            codegen_opins(pseudocode, uncontented_belpins, wire2cone, belpin_to_sitepin, site, site_type)
 if __name__ == '__main__':
     main()
