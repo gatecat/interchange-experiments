@@ -15,6 +15,9 @@ import java.util.HashSet;
 import  java.security.MessageDigest;
 import java.util.Base64;
 
+import java.util.Collections;
+
+
 public class tileshapes {
     static long database_size = 0;
 
@@ -87,6 +90,7 @@ public class tileshapes {
                     }
                 }
             }
+            shuffle_node_shapes();
         }
 
         public long update_node_shapes(HashSet<String> shapes, long node_count) throws NoSuchAlgorithmException {
@@ -115,6 +119,54 @@ public class tileshapes {
                 md.reset();
             }
             return node_count;
+        }
+
+        public void shuffle_node_shapes() {
+            for (int [][] nw : node_wires) {
+                if (nw == null)
+                    continue;
+                int x0 = 999999, x1 = -999999;
+                int y0 = 999999, y1 = -999999;
+                for (int [] w : nw) {
+                    x0 = Math.min(x0, w[0]);
+                    x1 = Math.max(x1, w[0]);
+                    y0 = Math.min(y0, w[1]);
+                    y1 = Math.max(y1, w[1]);
+                }
+                int[] corners = {-1, -1, -1, -1};
+                int i = 0;
+                // Find 'edge nodes'
+                for (int [] w : nw) {
+                    if (w[0] == x0 && corners[0] == -1)
+                        corners[0] = i;
+                    if (w[0] == x1 && corners[1] == -1)
+                        corners[1] = i;
+                    if (w[1] == y0 && corners[2] == -1)
+                        corners[2] = i;
+                    if (w[1] == y1 && corners[3] == -1)
+                        corners[3] = i;
+                    i++;
+                }
+                // Remove non-unique corners
+                for (int j = 0; j < 4; j++) {
+                    for (int k = 0; k < j; k++) {
+                        if (corners[j] == corners[k]) {
+                            corners[j] = -1;
+                            break;
+                        }
+                    }
+                }
+                // Put edge nodes first for fast bounding box computation
+                i = 0;
+                for (int j = 0; j < 4; j++) {
+                    if (corners[j] == -1)
+                        continue;
+                    int[] tmp = nw[i];
+                    nw[i] = nw[corners[j]];
+                    nw[corners[j]] = tmp;
+                    i++;
+                }
+            }
         }
 
         public String hash() throws NoSuchAlgorithmException {
